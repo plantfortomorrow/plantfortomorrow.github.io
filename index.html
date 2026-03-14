@@ -19,8 +19,6 @@
             overflow: hidden;
         }
         #scene {
-            width: 900px;
-            height: 860px;
             position: relative;
             margin-bottom: 1.5rem;
         }
@@ -33,8 +31,6 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 900px;
-            height: 860px;
             display: none;
             overflow: hidden;
         }
@@ -98,9 +94,8 @@
     const DAMPING = 0.92;
     const STIFFNESS = 0.08;
 
-    const W = 900;
-    const H = 860;
-    const GROUND_Y = H - 80;
+    // dimensions computed in setup() based on screen size
+    let W, H, GROUND_Y, COLS, ROWS, CELL_W, CELL_H;
 
     // --- Solar position: Cairo, NY — oldest fossil forest, ~387 Mya ---
     const CAIRO_LAT = 42.2981;
@@ -180,34 +175,48 @@
         asciiPre.style.background = 'transparent';
     }
 
-    // ASCII grid dimensions
-    const COLS = 100;
-    const ROWS = 50;
-    const CELL_W = W / COLS;
-    const CELL_H = H / ROWS;
-
     let plants = [];
+    let sceneScale = 1;
     let renderMode = 'canvas'; // 'canvas' or 'ascii'
     let asciiPre;
     let canvasWrap, asciiWrap, toggleBtn;
 
     function setup() {
+        // responsive sizing: fit to screen, max 900px
+        let maxW = min(windowWidth - 20, 900);
+        let scale = maxW / 900;
+        W = maxW;
+        H = Math.round(860 * scale);
+        GROUND_Y = H - Math.round(80 * scale);
+
+        // ASCII grid scales with resolution
+        COLS = Math.round(100 * scale);
+        ROWS = Math.round(50 * scale);
+        CELL_W = W / COLS;
+        CELL_H = H / ROWS;
+
+        let scene = document.getElementById('scene');
+        scene.style.width = W + 'px';
+        scene.style.height = H + 'px';
+
         let canvas = createCanvas(W, H);
         canvas.parent('canvas-wrap');
 
         asciiPre = document.getElementById('ascii-pre');
         canvasWrap = document.getElementById('canvas-wrap');
         asciiWrap = document.getElementById('ascii-wrap');
+        asciiWrap.style.width = W + 'px';
+        asciiWrap.style.height = H + 'px';
         toggleBtn = document.getElementById('mode-toggle');
 
         toggleBtn.addEventListener('click', toggleMode);
 
-        // size ASCII font so grid fills exactly 900x860
         sizeAsciiFont();
 
-        plants.push(new Plant(W * 0.22, GROUND_Y, 11, 6.4, 0.0));
-        plants.push(new Plant(W * 0.52, GROUND_Y, 14, 7.0, 100));
-        plants.push(new Plant(W * 0.78, GROUND_Y, 10, 6.0, 200));
+        sceneScale = scale;
+        plants.push(new Plant(W * 0.22, GROUND_Y, 11, 6.4 * sceneScale, 0.0));
+        plants.push(new Plant(W * 0.52, GROUND_Y, 14, 7.0 * sceneScale, 100));
+        plants.push(new Plant(W * 0.78, GROUND_Y, 10, 6.0 * sceneScale, 200));
     }
 
     function keyPressed() {
@@ -511,7 +520,7 @@
 
             noFill();
             for (let w = 0; w < 2; w++) {
-                let sw = w === 0 ? 7 : 3;
+                let sw = w === 0 ? 7 * sceneScale : 3 * sceneScale;
                 let sc = w === 0 ? color(55, 95, 65) : color(74, 124, 89);
                 stroke(sc);
                 strokeWeight(sw);
@@ -535,23 +544,24 @@
             push();
             translate(x, y);
             rotate(stemAngle + side * 0.8);
-            let leafLen = 36 * sz;
-            let leafWidth = 14 * sz;
+            let leafLen = 36 * sz * sceneScale;
+            let leafWidth = 14 * sz * sceneScale;
 
             noStroke();
             fill(90, 158, 111, 200);
             beginShape();
             vertex(0, 0);
-            bezierVertex(side * leafWidth * 0.5, -leafLen * 0.3, side * leafWidth, -leafLen * 0.6, side * 4, -leafLen);
+            let tipOff = 4 * sceneScale;
+            bezierVertex(side * leafWidth * 0.5, -leafLen * 0.3, side * leafWidth, -leafLen * 0.6, side * tipOff, -leafLen);
             bezierVertex(side * -leafWidth * 0.3, -leafLen * 0.7, side * -leafWidth * 0.2, -leafLen * 0.3, 0, 0);
             endShape(CLOSE);
 
             stroke(61, 107, 74);
-            strokeWeight(1.5);
+            strokeWeight(1.5 * sceneScale);
             noFill();
             beginShape();
             vertex(0, 0);
-            bezierVertex(side * leafWidth * 0.15, -leafLen * 0.3, side * leafWidth * 0.3, -leafLen * 0.5, side * 4, -leafLen);
+            bezierVertex(side * leafWidth * 0.15, -leafLen * 0.3, side * leafWidth * 0.3, -leafLen * 0.5, side * tipOff, -leafLen);
             endShape();
             pop();
         }
@@ -560,7 +570,7 @@
             push();
             translate(x, y);
             rotate(stemAngle * 0.3);
-            let baseRadius = 24;
+            let baseRadius = 24 * sceneScale;
             let t = frameCount * 0.01 + this.noiseSeed;
 
             for (let i = 0; i < this.petalCount; i++) {
@@ -612,8 +622,8 @@
         }
 
         drawLeafAscii(grid, x, y, side, sz, stemAngle) {
-            let leafLen = 36 * sz;
-            let leafWidth = 14 * sz;
+            let leafLen = 36 * sz * sceneScale;
+            let leafWidth = 14 * sz * sceneScale;
             let ang = stemAngle + side * 0.8;
             let leafColor = '#5a9e6f';
             let veinColor = '#3d6b4a';
@@ -660,7 +670,7 @@
             let amber = '#e8a317';
             let darkAmber = '#d4911a';
             let center = '#c47f17';
-            let r = 24; // radius in pixels
+            let r = 24 * sceneScale; // radius in pixels
 
             // flower pattern - rings of characters
             // outer ring

@@ -18,19 +18,32 @@
             flex-direction: column;
             overflow: hidden;
         }
-        #canvas-wrap {
+        #scene {
+            width: 900px;
+            height: 860px;
+            position: relative;
             margin-bottom: 1.5rem;
+        }
+        #canvas-wrap {
+            position: absolute;
+            top: 0;
+            left: 0;
         }
         #ascii-wrap {
-            margin-bottom: 1.5rem;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 900px;
+            height: 860px;
             display: none;
+            overflow: hidden;
         }
         #ascii-pre {
-            font-size: 14px;
-            line-height: 1.15;
-            letter-spacing: 0.05em;
             white-space: pre;
             background: #0a0a0a;
+            margin: 0;
+            padding: 0;
+            letter-spacing: 0;
         }
         h1 {
             font-size: 1.2rem;
@@ -68,8 +81,10 @@
     </style>
 </head>
 <body>
-    <div id="canvas-wrap"></div>
-    <div id="ascii-wrap"><pre id="ascii-pre"></pre></div>
+    <div id="scene">
+        <div id="canvas-wrap"></div>
+        <div id="ascii-wrap"><pre id="ascii-pre"></pre></div>
+    </div>
     <h1>plant for tomorrow</h1>
     <div class="org-row">
         <p class="org">plantfortomorrow.org</p>
@@ -110,6 +125,9 @@
 
         toggleBtn.addEventListener('click', toggleMode);
 
+        // size ASCII font so grid fills exactly 900x860
+        sizeAsciiFont();
+
         plants.push(new Plant(W * 0.22, GROUND_Y, 11, 6.4, 0.0));
         plants.push(new Plant(W * 0.52, GROUND_Y, 14, 7.0, 100));
         plants.push(new Plant(W * 0.78, GROUND_Y, 10, 6.0, 200));
@@ -130,6 +148,29 @@
             asciiWrap.style.display = 'block';
             toggleBtn.textContent = '_';
         }
+    }
+
+    function sizeAsciiFont() {
+        // measure actual character cell size at a reference font-size
+        let measure = document.createElement('span');
+        measure.style.fontFamily = "'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace";
+        measure.style.fontSize = '20px';
+        measure.style.lineHeight = '1';
+        measure.style.position = 'absolute';
+        measure.style.whiteSpace = 'pre';
+        measure.style.visibility = 'hidden';
+        measure.textContent = 'X'.repeat(COLS);
+        document.body.appendChild(measure);
+        let charWidth20 = measure.offsetWidth / COLS; // width of one char at 20px
+        document.body.removeChild(measure);
+
+        // target: COLS chars = 900px wide
+        let targetFontSize = 20 * (W / (charWidth20 * COLS));
+        // target: ROWS lines = 860px tall
+        let targetLineHeight = H / ROWS;
+
+        asciiPre.style.fontSize = targetFontSize + 'px';
+        asciiPre.style.lineHeight = targetLineHeight + 'px';
     }
 
     function draw() {

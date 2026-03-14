@@ -102,6 +102,84 @@
     const H = 860;
     const GROUND_Y = H - 80;
 
+    // --- Solar position: Cairo, NY — oldest fossil forest, ~387 Mya ---
+    const CAIRO_LAT = 42.2981;
+    const CAIRO_LON = -73.9985;
+
+    // sky color stops: [altitude°, [zenithR,G,B], [horizonR,G,B], [groundR,G,B]]
+    const SKY_STOPS = [
+        [-18, [4,  4,  8 ], [6,  6,  12], [8,  12, 8 ]],
+        [-6,  [6,  8,  20], [12, 12, 30], [10, 16, 12]],
+        [-2,  [10, 8,  22], [35, 20, 28], [14, 20, 14]],
+        [0,   [14, 10, 18], [55, 32, 22], [18, 25, 16]],
+        [5,   [14, 16, 24], [40, 30, 22], [22, 30, 18]],
+        [15,  [10, 14, 20], [18, 20, 18], [20, 28, 16]],
+        [40,  [8,  12, 16], [14, 16, 14], [18, 26, 15]],
+        [90,  [8,  12, 16], [14, 16, 14], [18, 26, 15]],
+    ];
+
+    let skyZenith = [10, 10, 10];
+    let skyHorizon = [10, 10, 10];
+    let skyGround = [18, 26, 15];
+    let lastSolarCheck = 0;
+
+    function getSolarAltitude() {
+        let now = new Date();
+        let utcH = now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600;
+
+        // day of year
+        let jan1 = new Date(now.getFullYear(), 0, 1);
+        let dayOfYear = Math.floor((now - jan1) / 86400000) + 1;
+
+        // solar declination
+        let decDeg = -23.45 * Math.cos((2 * Math.PI / 365) * (dayOfYear + 10));
+        let decRad = decDeg * Math.PI / 180;
+
+        // solar time via longitude (bypasses timezone/DST)
+        let solarTime = utcH + CAIRO_LON / 15;
+        if (solarTime < 0) solarTime += 24;
+        if (solarTime >= 24) solarTime -= 24;
+
+        // hour angle and altitude
+        let haRad = (solarTime - 12) * 15 * Math.PI / 180;
+        let latRad = CAIRO_LAT * Math.PI / 180;
+        let sinAlt = Math.sin(latRad) * Math.sin(decRad) +
+                     Math.cos(latRad) * Math.cos(decRad) * Math.cos(haRad);
+        return Math.asin(Math.min(1, Math.max(-1, sinAlt))) * 180 / Math.PI;
+    }
+
+    function lerpColor3(a, b, t) {
+        return [
+            a[0] + (b[0] - a[0]) * t,
+            a[1] + (b[1] - a[1]) * t,
+            a[2] + (b[2] - a[2]) * t,
+        ];
+    }
+
+    function interpolateSky(alt, idx) {
+        // idx: 1=zenith, 2=horizon, 3=ground
+        for (let i = 0; i < SKY_STOPS.length - 1; i++) {
+            if (alt <= SKY_STOPS[i + 1][0]) {
+                let t = (alt - SKY_STOPS[i][0]) / (SKY_STOPS[i + 1][0] - SKY_STOPS[i][0]);
+                t = Math.max(0, Math.min(1, t));
+                return lerpColor3(SKY_STOPS[i][idx], SKY_STOPS[i + 1][idx], t);
+            }
+        }
+        return SKY_STOPS[SKY_STOPS.length - 1][idx];
+    }
+
+    function updateSkyColors() {
+        let alt = getSolarAltitude();
+        skyZenith = interpolateSky(alt, 1);
+        skyHorizon = interpolateSky(alt, 2);
+        skyGround = interpolateSky(alt, 3);
+
+        // sync body background to zenith
+        let z = skyZenith;
+        document.body.style.background = 'rgb(' + Math.round(z[0]) + ',' + Math.round(z[1]) + ',' + Math.round(z[2]) + ')';
+        asciiPre.style.background = 'transparent';
+    }
+
     // ASCII grid dimensions
     const COLS = 100;
     const ROWS = 50;
@@ -173,6 +251,12 @@
     }
 
     function draw() {
+        // update sky every 5 seconds
+        if (frameCount - lastSolarCheck > 300 || lastSolarCheck === 0) {
+            updateSkyColors();
+            lastSolarCheck = frameCount;
+        }
+
         // wind force from Perlin noise
         let t = frameCount * 0.008;
         let windBase = (noise(t) - 0.45) * WIND_SPEED;
@@ -193,14 +277,26 @@
     }
 
     function drawCanvas() {
-        background(10);
-
-        // ground
+        // sky gradient: zenith at top → horizon at ground line
         noStroke();
+        for (let y = 0; y < GROUND_Y; y++) {
+            let t = y / GROUND_Y;
+            let c = lerpColor3(skyZenith, skyHorizon, t);
+            stroke(c[0], c[1], c[2]);
+            line(0, y, W, y);
+        }
+        // ground fill
+        noStroke();
+        fill(skyGround[0], skyGround[1], skyGround[2]);
+        rect(0, GROUND_Y, W, H - GROUND_Y);
+
+        // ground texture
         for (let i = 0; i < 70; i++) {
             let gx = noise(i * 0.3, 999) * W;
             let gy = GROUND_Y + noise(i * 0.5, 888) * 50;
-            fill(30 + noise(i * 0.7) * 16, 50 + noise(i * 0.9) * 20, 25 + noise(i * 0.4) * 12, 120);
+            fill(skyGround[0] + noise(i * 0.7) * 16,
+                 skyGround[1] + noise(i * 0.9) * 20,
+                 skyGround[2] + noise(i * 0.4) * 12, 120);
             text('~', gx, gy);
         }
 
@@ -248,42 +344,52 @@
         }
     }
 
-    // characters ordered by visual density for wind visualization
     const WIND_CHARS = [' ', ' ', '.', ',', '-', '~', '='];
-    const WIND_COLORS = ['#0d0d0d', '#111', '#141414', '#171717', '#1a1a1a', '#1d1d1d', '#202020'];
+
+    function rgbStr(r, g, b) {
+        return 'rgb(' + Math.round(r) + ',' + Math.round(g) + ',' + Math.round(b) + ')';
+    }
 
     function drawAscii() {
         let grid = makeGrid();
         let t = frameCount * 0.006;
-
-        // Perlin noise wind field background
         let groundRow = Math.floor(GROUND_Y / CELL_H);
+
+        // Perlin noise wind field — colors tinted by sky gradient
         for (let r = 0; r < groundRow; r++) {
+            let rowT = r / groundRow;
+            let rowColor = lerpColor3(skyZenith, skyHorizon, rowT);
+
             for (let c = 0; c < COLS; c++) {
-                // two octaves of noise scrolling with wind
                 let nx = c * 0.06 + t * 3;
                 let ny = r * 0.08 + t * 0.5;
                 let n1 = noise(nx, ny);
                 let n2 = noise(nx * 2.5 + 100, ny * 2.5 + 100) * 0.4;
                 let n = n1 + n2;
 
-                // map noise to character density
                 let idx = Math.floor(n * (WIND_CHARS.length - 1));
                 idx = Math.min(idx, WIND_CHARS.length - 1);
 
                 if (idx > 0) {
-                    let ci = Math.min(idx, WIND_COLORS.length - 1);
-                    grid[r][c] = { ch: WIND_CHARS[idx], fg: WIND_COLORS[ci] };
+                    // brighten row color by noise intensity
+                    let boost = 1.0 + idx * 0.15;
+                    let fg = rgbStr(
+                        Math.min(255, rowColor[0] * boost + idx * 2),
+                        Math.min(255, rowColor[1] * boost + idx * 2),
+                        Math.min(255, rowColor[2] * boost + idx * 2)
+                    );
+                    grid[r][c] = { ch: WIND_CHARS[idx], fg: fg };
                 }
             }
         }
 
-        // ground
+        // ground — tinted by sky ground color
         for (let r = groundRow; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
                 if (noise(c * 0.4 + r * 0.3, 777) > 0.35) {
-                    let shade = noise(c * 0.2, r * 0.5) > 0.5 ? '#2e4a35' : '#1a2e20';
-                    grid[r][c] = { ch: '~', fg: shade };
+                    let bright = noise(c * 0.2, r * 0.5) > 0.5 ? 1.3 : 0.8;
+                    let fg = rgbStr(skyGround[0] * bright, skyGround[1] * bright, skyGround[2] * bright);
+                    grid[r][c] = { ch: '~', fg: fg };
                 }
             }
         }

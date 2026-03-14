@@ -73,7 +73,7 @@
     <h1>plant for tomorrow</h1>
     <div class="org-row">
         <p class="org">plantfortomorrow.org</p>
-        <button id="mode-toggle">_</button>
+        <button id="mode-toggle">&#x273F;</button>
     </div>
 
     <script>
@@ -124,9 +124,11 @@
         if (renderMode === 'canvas') {
             canvasWrap.style.display = 'block';
             asciiWrap.style.display = 'none';
+            toggleBtn.textContent = '\u273F';
         } else {
             canvasWrap.style.display = 'none';
             asciiWrap.style.display = 'block';
+            toggleBtn.textContent = '_';
         }
     }
 
@@ -206,11 +208,37 @@
         }
     }
 
+    // characters ordered by visual density for wind visualization
+    const WIND_CHARS = [' ', ' ', '.', ',', '-', '~', '='];
+    const WIND_COLORS = ['#0d0d0d', '#111', '#141414', '#171717', '#1a1a1a', '#1d1d1d', '#202020'];
+
     function drawAscii() {
         let grid = makeGrid();
+        let t = frameCount * 0.006;
+
+        // Perlin noise wind field background
+        let groundRow = Math.floor(GROUND_Y / CELL_H);
+        for (let r = 0; r < groundRow; r++) {
+            for (let c = 0; c < COLS; c++) {
+                // two octaves of noise scrolling with wind
+                let nx = c * 0.06 + t * 3;
+                let ny = r * 0.08 + t * 0.5;
+                let n1 = noise(nx, ny);
+                let n2 = noise(nx * 2.5 + 100, ny * 2.5 + 100) * 0.4;
+                let n = n1 + n2;
+
+                // map noise to character density
+                let idx = Math.floor(n * (WIND_CHARS.length - 1));
+                idx = Math.min(idx, WIND_CHARS.length - 1);
+
+                if (idx > 0) {
+                    let ci = Math.min(idx, WIND_COLORS.length - 1);
+                    grid[r][c] = { ch: WIND_CHARS[idx], fg: WIND_COLORS[ci] };
+                }
+            }
+        }
 
         // ground
-        let groundRow = Math.floor(GROUND_Y / CELL_H);
         for (let r = groundRow; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
                 if (noise(c * 0.4 + r * 0.3, 777) > 0.35) {

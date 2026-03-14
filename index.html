@@ -21,6 +21,17 @@
         #canvas-wrap {
             margin-bottom: 1.5rem;
         }
+        #ascii-wrap {
+            margin-bottom: 1.5rem;
+            display: none;
+        }
+        #ascii-pre {
+            font-size: 14px;
+            line-height: 1.15;
+            letter-spacing: 0.05em;
+            white-space: pre;
+            background: #0a0a0a;
+        }
         h1 {
             font-size: 1.2rem;
             font-weight: 400;
@@ -34,17 +45,41 @@
             color: #555;
             letter-spacing: 0.2em;
         }
+        .org-row {
+            display: flex;
+            align-items: baseline;
+            gap: 0;
+        }
+        #mode-toggle {
+            background: none;
+            border: none;
+            color: #333;
+            font-family: inherit;
+            font-size: 0.75rem;
+            padding: 0;
+            margin-left: 0.15rem;
+            cursor: pointer;
+            letter-spacing: 0.2em;
+            transition: color 0.3s;
+        }
+        #mode-toggle:hover {
+            color: #888;
+        }
     </style>
 </head>
 <body>
     <div id="canvas-wrap"></div>
+    <div id="ascii-wrap"><pre id="ascii-pre"></pre></div>
     <h1>plant for tomorrow</h1>
-    <p class="org">plantfortomorrow.org</p>
+    <div class="org-row">
+        <p class="org">plantfortomorrow.org</p>
+        <button id="mode-toggle">_</button>
+    </div>
 
     <script>
     // --- Forces ---
-    const WIND_SPEED = 0.4;       // 0 = still, 1 = strong gusts
-    const WIND_TURBULENCE = 0.6;  // how chaotic the wind is
+    const WIND_SPEED = 0.4;
+    const WIND_TURBULENCE = 0.6;
     const GRAVITY = 0.02;
     const DAMPING = 0.92;
     const STIFFNESS = 0.08;
@@ -53,18 +88,69 @@
     const H = 860;
     const GROUND_Y = H - 80;
 
+    // ASCII grid dimensions
+    const COLS = 100;
+    const ROWS = 50;
+    const CELL_W = W / COLS;
+    const CELL_H = H / ROWS;
+
     let plants = [];
+    let renderMode = 'canvas'; // 'canvas' or 'ascii'
+    let asciiPre;
+    let canvasWrap, asciiWrap, toggleBtn;
 
     function setup() {
         let canvas = createCanvas(W, H);
         canvas.parent('canvas-wrap');
+
+        asciiPre = document.getElementById('ascii-pre');
+        canvasWrap = document.getElementById('canvas-wrap');
+        asciiWrap = document.getElementById('ascii-wrap');
+        toggleBtn = document.getElementById('mode-toggle');
+
+        toggleBtn.addEventListener('click', toggleMode);
 
         plants.push(new Plant(W * 0.22, GROUND_Y, 11, 6.4, 0.0));
         plants.push(new Plant(W * 0.52, GROUND_Y, 14, 7.0, 100));
         plants.push(new Plant(W * 0.78, GROUND_Y, 10, 6.0, 200));
     }
 
+    function keyPressed() {
+        if (key === 'a' || key === 'A') toggleMode();
+    }
+
+    function toggleMode() {
+        renderMode = renderMode === 'canvas' ? 'ascii' : 'canvas';
+        if (renderMode === 'canvas') {
+            canvasWrap.style.display = 'block';
+            asciiWrap.style.display = 'none';
+        } else {
+            canvasWrap.style.display = 'none';
+            asciiWrap.style.display = 'block';
+        }
+    }
+
     function draw() {
+        // wind force from Perlin noise
+        let t = frameCount * 0.008;
+        let windBase = (noise(t) - 0.45) * WIND_SPEED;
+        let gust = (noise(t * 3.0 + 50) - 0.5) * WIND_SPEED * WIND_TURBULENCE;
+        let windForce = windBase + gust;
+
+        for (let p of plants) {
+            p.applyWind(windForce, t);
+            p.update();
+            p.computePoints();
+        }
+
+        if (renderMode === 'canvas') {
+            drawCanvas();
+        } else {
+            drawAscii();
+        }
+    }
+
+    function drawCanvas() {
         background(10);
 
         // ground
@@ -76,18 +162,101 @@
             text('~', gx, gy);
         }
 
-        // wind force from Perlin noise
-        let t = frameCount * 0.008;
-        let windBase = (noise(t) - 0.45) * WIND_SPEED;
-        let gust = (noise(t * 3.0 + 50) - 0.5) * WIND_SPEED * WIND_TURBULENCE;
-        let windForce = windBase + gust;
-
         for (let p of plants) {
-            p.applyWind(windForce, t);
-            p.update();
-            p.draw();
+            p.drawCanvas();
         }
     }
+
+    // --- ASCII Renderer ---
+
+    function makeGrid() {
+        let grid = [];
+        for (let r = 0; r < ROWS; r++) {
+            grid[r] = [];
+            for (let c = 0; c < COLS; c++) {
+                grid[r][c] = { ch: ' ', fg: null };
+            }
+        }
+        return grid;
+    }
+
+    function gridSet(grid, px, py, ch, fg) {
+        let c = Math.floor(px / CELL_W);
+        let r = Math.floor(py / CELL_H);
+        if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+            grid[r][c] = { ch, fg };
+        }
+    }
+
+    function gridLine(grid, x0, y0, x1, y1, fg) {
+        let dx = x1 - x0;
+        let dy = y1 - y0;
+        let steps = Math.max(Math.abs(dx / CELL_W), Math.abs(dy / CELL_H), 1);
+        steps = Math.ceil(steps);
+        for (let i = 0; i <= steps; i++) {
+            let t = steps === 0 ? 0 : i / steps;
+            let x = x0 + dx * t;
+            let y = y0 + dy * t;
+            let slope = steps > 0 ? dx / Math.max(Math.abs(dy), 1) : 0;
+            let ch;
+            if (Math.abs(slope) < 0.3) ch = '|';
+            else if (slope > 0) ch = dy < 0 ? '/' : '\\';
+            else ch = dy < 0 ? '\\' : '/';
+            gridSet(grid, x, y, ch, fg);
+        }
+    }
+
+    function drawAscii() {
+        let grid = makeGrid();
+
+        // ground
+        let groundRow = Math.floor(GROUND_Y / CELL_H);
+        for (let r = groundRow; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                if (noise(c * 0.4 + r * 0.3, 777) > 0.35) {
+                    let shade = noise(c * 0.2, r * 0.5) > 0.5 ? '#2e4a35' : '#1a2e20';
+                    grid[r][c] = { ch: '~', fg: shade };
+                }
+            }
+        }
+
+        // draw each plant
+        for (let p of plants) {
+            p.drawAsciiGrid(grid);
+        }
+
+        // render grid to HTML
+        let lines = [];
+        for (let r = 0; r < ROWS; r++) {
+            let line = '';
+            let i = 0;
+            while (i < COLS) {
+                let cell = grid[r][i];
+                if (!cell.fg) {
+                    // collect consecutive uncolored cells
+                    let run = '';
+                    while (i < COLS && !grid[r][i].fg) {
+                        run += grid[r][i].ch;
+                        i++;
+                    }
+                    line += run;
+                } else {
+                    // collect consecutive same-color cells
+                    let fg = cell.fg;
+                    let run = '';
+                    while (i < COLS && grid[r][i].fg === fg) {
+                        run += grid[r][i].ch;
+                        i++;
+                    }
+                    line += '<span style="color:' + fg + '">' + run + '</span>';
+                }
+            }
+            lines.push(line);
+        }
+        asciiPre.innerHTML = lines.join('\n');
+    }
+
+    // --- Plant Class ---
 
     class Plant {
         constructor(x, groundY, segCount, segLen, noiseSeed) {
@@ -98,21 +267,18 @@
             this.noiseSeed = noiseSeed;
             this.segments = [];
             this.leaves = [];
+            this.points = [];
 
-            // build segments from ground up
             for (let i = 0; i < segCount; i++) {
                 this.segments.push({
-                    angle: 0,        // deflection from vertical
+                    angle: 0,
                     velocity: 0,
                     restAngle: 0,
-                    // how much this segment responds to wind (more at top)
                     windFactor: map(i, 0, segCount - 1, 0.1, 1.0),
-                    // stiffness decreases toward top
                     stiffness: map(i, 0, segCount - 1, STIFFNESS * 1.5, STIFFNESS * 0.6),
                 });
             }
 
-            // place leaves at specific segments
             let leafPositions = [
                 { seg: floor(segCount * 0.3), side: 1, size: 0.8 },
                 { seg: floor(segCount * 0.45), side: -1, size: 1.0 },
@@ -120,12 +286,9 @@
                 { seg: floor(segCount * 0.75), side: -1, size: 0.7 },
             ];
             for (let lp of leafPositions) {
-                if (lp.seg < segCount) {
-                    this.leaves.push(lp);
-                }
+                if (lp.seg < segCount) this.leaves.push(lp);
             }
 
-            // flower properties
             this.petalCount = floor(random(10, 16));
             this.petalSizes = [];
             for (let i = 0; i < this.petalCount; i++) {
@@ -136,7 +299,6 @@
         applyWind(windForce, t) {
             for (let i = 0; i < this.segments.length; i++) {
                 let seg = this.segments[i];
-                // each segment gets slightly different wind via noise offset
                 let localWind = windForce * seg.windFactor;
                 let turbulence = (noise(t * 2 + i * 0.3 + this.noiseSeed) - 0.5) * 0.02 * WIND_TURBULENCE;
                 seg.velocity += localWind * 0.015 + turbulence;
@@ -145,33 +307,34 @@
 
         update() {
             for (let seg of this.segments) {
-                // spring force back to rest
                 let springForce = -(seg.angle - seg.restAngle) * seg.stiffness;
-                // gravity pulls back to vertical
                 let gravityForce = -sin(seg.angle) * GRAVITY;
                 seg.velocity += springForce + gravityForce;
                 seg.velocity *= DAMPING;
                 seg.angle += seg.velocity;
-                // clamp to prevent wild swings
                 seg.angle = constrain(seg.angle, -0.4, 0.4);
             }
         }
 
-        draw() {
-            // compute segment positions from base up
-            let points = [{ x: this.baseX, y: this.baseY }];
+        computePoints() {
+            this.points = [{ x: this.baseX, y: this.baseY, cumAngle: 0 }];
             let cumulativeAngle = 0;
-
             for (let i = 0; i < this.segments.length; i++) {
-                let seg = this.segments[i];
-                cumulativeAngle += seg.angle;
-                let prev = points[points.length - 1];
-                let px = prev.x + sin(cumulativeAngle) * this.segLen;
-                let py = prev.y - cos(cumulativeAngle) * this.segLen;
-                points.push({ x: px, y: py, cumAngle: cumulativeAngle });
+                cumulativeAngle += this.segments[i].angle;
+                let prev = this.points[this.points.length - 1];
+                this.points.push({
+                    x: prev.x + sin(cumulativeAngle) * this.segLen,
+                    y: prev.y - cos(cumulativeAngle) * this.segLen,
+                    cumAngle: cumulativeAngle,
+                });
             }
+        }
 
-            // draw stem
+        // --- Canvas drawing ---
+
+        drawCanvas() {
+            let pts = this.points;
+
             noFill();
             for (let w = 0; w < 2; w++) {
                 let sw = w === 0 ? 7 : 3;
@@ -179,115 +342,176 @@
                 stroke(sc);
                 strokeWeight(sw);
                 beginShape();
-                curveVertex(points[0].x, points[0].y);
-                for (let p of points) {
-                    curveVertex(p.x, p.y);
-                }
-                curveVertex(points[points.length - 1].x, points[points.length - 1].y);
+                curveVertex(pts[0].x, pts[0].y);
+                for (let p of pts) curveVertex(p.x, p.y);
+                curveVertex(pts[pts.length - 1].x, pts[pts.length - 1].y);
                 endShape();
             }
 
-            // draw leaves
             for (let lf of this.leaves) {
-                let segIdx = lf.seg;
-                let pt = points[segIdx + 1];
-                let ang = pt.cumAngle + (lf.side * (PI * 0.3));
-                this.drawLeaf(pt.x, pt.y, ang, lf.side, lf.size, points[segIdx + 1].cumAngle);
+                let pt = pts[lf.seg + 1];
+                this.drawLeafCanvas(pt.x, pt.y, lf.side, lf.size, pt.cumAngle);
             }
 
-            // draw flower at top
-            let tip = points[points.length - 1];
-            let tipAngle = points[points.length - 1].cumAngle;
-            this.drawFlower(tip.x, tip.y, tipAngle);
+            let tip = pts[pts.length - 1];
+            this.drawFlowerCanvas(tip.x, tip.y, tip.cumAngle);
         }
 
-        drawLeaf(x, y, angle, side, sz, stemAngle) {
+        drawLeafCanvas(x, y, side, sz, stemAngle) {
             push();
             translate(x, y);
             rotate(stemAngle + side * 0.8);
-
             let leafLen = 36 * sz;
             let leafWidth = 14 * sz;
 
-            // leaf shape
             noStroke();
             fill(90, 158, 111, 200);
             beginShape();
             vertex(0, 0);
-            bezierVertex(
-                side * leafWidth * 0.5, -leafLen * 0.3,
-                side * leafWidth, -leafLen * 0.6,
-                side * 4, -leafLen
-            );
-            bezierVertex(
-                side * -leafWidth * 0.3, -leafLen * 0.7,
-                side * -leafWidth * 0.2, -leafLen * 0.3,
-                0, 0
-            );
+            bezierVertex(side * leafWidth * 0.5, -leafLen * 0.3, side * leafWidth, -leafLen * 0.6, side * 4, -leafLen);
+            bezierVertex(side * -leafWidth * 0.3, -leafLen * 0.7, side * -leafWidth * 0.2, -leafLen * 0.3, 0, 0);
             endShape(CLOSE);
 
-            // leaf vein
             stroke(61, 107, 74);
             strokeWeight(1.5);
             noFill();
             beginShape();
             vertex(0, 0);
-            bezierVertex(
-                side * leafWidth * 0.15, -leafLen * 0.3,
-                side * leafWidth * 0.3, -leafLen * 0.5,
-                side * 4, -leafLen
-            );
+            bezierVertex(side * leafWidth * 0.15, -leafLen * 0.3, side * leafWidth * 0.3, -leafLen * 0.5, side * 4, -leafLen);
             endShape();
-
             pop();
         }
 
-        drawFlower(x, y, stemAngle) {
+        drawFlowerCanvas(x, y, stemAngle) {
             push();
             translate(x, y);
-
-            let flowerTilt = stemAngle * 0.3;
-            rotate(flowerTilt);
-
+            rotate(stemAngle * 0.3);
             let baseRadius = 24;
             let t = frameCount * 0.01 + this.noiseSeed;
 
-            // outer petals (larger, darker amber)
             for (let i = 0; i < this.petalCount; i++) {
                 let a = (TWO_PI / this.petalCount) * i;
                 let wobble = sin(t * 0.7 + i * 0.5) * 0.08;
                 let pa = a + wobble;
                 let pr = baseRadius * this.petalSizes[i];
-                let px = cos(pa) * pr * 0.7;
-                let py = sin(pa) * pr * 0.7;
-
                 noStroke();
                 fill(212, 145, 26, 220);
-                ellipse(px, py, pr * 1.1, pr * 0.7);
+                ellipse(cos(pa) * pr * 0.7, sin(pa) * pr * 0.7, pr * 1.1, pr * 0.7);
             }
-
-            // middle petals (brighter)
             for (let i = 0; i < this.petalCount - 2; i++) {
                 let a = (TWO_PI / (this.petalCount - 2)) * i + 0.3;
                 let wobble = sin(t * 0.9 + i * 0.7) * 0.06;
                 let pa = a + wobble;
                 let pr = baseRadius * 0.7;
-                let px = cos(pa) * pr * 0.5;
-                let py = sin(pa) * pr * 0.5;
-
                 noStroke();
                 fill(232, 163, 23, 230);
-                ellipse(px, py, pr * 0.9, pr * 0.55);
+                ellipse(cos(pa) * pr * 0.5, sin(pa) * pr * 0.5, pr * 0.9, pr * 0.55);
             }
-
-            // center
             noStroke();
             fill(196, 127, 23);
             ellipse(0, 0, baseRadius * 0.6, baseRadius * 0.6);
             fill(170, 105, 15);
             ellipse(0, 0, baseRadius * 0.35, baseRadius * 0.35);
-
             pop();
+        }
+
+        // --- ASCII drawing ---
+
+        drawAsciiGrid(grid) {
+            let pts = this.points;
+            let stemColor = '#4a7c59';
+
+            // stem
+            for (let i = 0; i < pts.length - 1; i++) {
+                gridLine(grid, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, stemColor);
+            }
+
+            // leaves
+            for (let lf of this.leaves) {
+                let pt = pts[lf.seg + 1];
+                this.drawLeafAscii(grid, pt.x, pt.y, lf.side, lf.size, pt.cumAngle);
+            }
+
+            // flower
+            let tip = pts[pts.length - 1];
+            this.drawFlowerAscii(grid, tip.x, tip.y);
+        }
+
+        drawLeafAscii(grid, x, y, side, sz, stemAngle) {
+            let leafLen = 36 * sz;
+            let leafWidth = 14 * sz;
+            let ang = stemAngle + side * 0.8;
+            let leafColor = '#5a9e6f';
+            let veinColor = '#3d6b4a';
+
+            // draw leaf as a short angled line with characters
+            let tipX = x + Math.sin(ang) * leafLen * 0.7 * side;
+            let tipY = y - Math.cos(ang) * leafLen * 0.7;
+            let midX = x + Math.sin(ang) * leafLen * 0.35 * side;
+            let midY = y - Math.cos(ang) * leafLen * 0.35;
+
+            // leaf body - a few characters along the leaf
+            let steps = Math.ceil(leafLen / CELL_H);
+            for (let i = 0; i <= steps; i++) {
+                let t = i / steps;
+                let lx = x + (tipX - x) * t;
+                let ly = y + (tipY - y) * t;
+                // leaf width varies along length (widest at middle)
+                let w = Math.sin(t * Math.PI) * leafWidth * 0.4;
+
+                let c = Math.floor(lx / CELL_W);
+                let r = Math.floor(ly / CELL_H);
+                if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+                    // choose character based on position
+                    if (t < 0.15) {
+                        grid[r][c] = { ch: side > 0 ? '(' : ')', fg: leafColor };
+                    } else if (t > 0.85) {
+                        grid[r][c] = { ch: side > 0 ? '>' : '<', fg: leafColor };
+                    } else {
+                        grid[r][c] = { ch: side > 0 ? ')' : '(', fg: leafColor };
+                        // width chars on either side
+                        let wc = Math.floor(w / CELL_W);
+                        for (let j = 1; j <= wc; j++) {
+                            let cc = c + j * side;
+                            if (cc >= 0 && cc < COLS) {
+                                grid[r][cc] = { ch: t < 0.5 ? '{' : '}', fg: veinColor };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        drawFlowerAscii(grid, x, y) {
+            let amber = '#e8a317';
+            let darkAmber = '#d4911a';
+            let center = '#c47f17';
+            let r = 24; // radius in pixels
+
+            // flower pattern - rings of characters
+            // outer ring
+            let outerChars = ['*', 'o', '*', 'o', '*', 'o', '*', 'o'];
+            for (let i = 0; i < outerChars.length; i++) {
+                let a = (Math.PI * 2 / outerChars.length) * i + frameCount * 0.003 + this.noiseSeed;
+                let px = x + Math.cos(a) * r;
+                let py = y + Math.sin(a) * r * 0.6;
+                gridSet(grid, px, py, outerChars[i], darkAmber);
+            }
+
+            // middle ring
+            let midChars = ['.', 'o', '.', 'o', '.', 'o'];
+            for (let i = 0; i < midChars.length; i++) {
+                let a = (Math.PI * 2 / midChars.length) * i + 0.3 + frameCount * 0.002 + this.noiseSeed;
+                let px = x + Math.cos(a) * r * 0.55;
+                let py = y + Math.sin(a) * r * 0.35;
+                gridSet(grid, px, py, midChars[i], amber);
+            }
+
+            // center
+            gridSet(grid, x, y, '@', center);
+            // fill gaps around center
+            gridSet(grid, x - CELL_W, y, '*', amber);
+            gridSet(grid, x + CELL_W, y, '*', amber);
         }
     }
     </script>

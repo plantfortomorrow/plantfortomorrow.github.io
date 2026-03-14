@@ -49,9 +49,9 @@
     const DAMPING = 0.92;
     const STIFFNESS = 0.08;
 
-    const W = 500;
-    const H = 480;
-    const GROUND_Y = H - 50;
+    const W = 900;
+    const H = 860;
+    const GROUND_Y = H - 80;
 
     let plants = [];
 
@@ -59,9 +59,9 @@
         let canvas = createCanvas(W, H);
         canvas.parent('canvas-wrap');
 
-        plants.push(new Plant(W * 0.22, GROUND_Y, 11, 3.2, 0.0));
-        plants.push(new Plant(W * 0.52, GROUND_Y, 14, 3.5, 100));
-        plants.push(new Plant(W * 0.78, GROUND_Y, 10, 3.0, 200));
+        plants.push(new Plant(W * 0.22, GROUND_Y, 11, 6.4, 0.0));
+        plants.push(new Plant(W * 0.52, GROUND_Y, 14, 7.0, 100));
+        plants.push(new Plant(W * 0.78, GROUND_Y, 10, 6.0, 200));
     }
 
     function draw() {
@@ -69,9 +69,9 @@
 
         // ground
         noStroke();
-        for (let i = 0; i < 40; i++) {
+        for (let i = 0; i < 70; i++) {
             let gx = noise(i * 0.3, 999) * W;
-            let gy = GROUND_Y + noise(i * 0.5, 888) * 30;
+            let gy = GROUND_Y + noise(i * 0.5, 888) * 50;
             fill(30 + noise(i * 0.7) * 16, 50 + noise(i * 0.9) * 20, 25 + noise(i * 0.4) * 12, 120);
             text('~', gx, gy);
         }
@@ -174,7 +174,7 @@
             // draw stem
             noFill();
             for (let w = 0; w < 2; w++) {
-                let sw = w === 0 ? 3.5 : 1.5;
+                let sw = w === 0 ? 7 : 3;
                 let sc = w === 0 ? color(55, 95, 65) : color(74, 124, 89);
                 stroke(sc);
                 strokeWeight(sw);
@@ -206,8 +206,8 @@
             translate(x, y);
             rotate(stemAngle + side * 0.8);
 
-            let leafLen = 18 * sz;
-            let leafWidth = 7 * sz;
+            let leafLen = 36 * sz;
+            let leafWidth = 14 * sz;
 
             // leaf shape
             noStroke();
@@ -217,7 +217,7 @@
             bezierVertex(
                 side * leafWidth * 0.5, -leafLen * 0.3,
                 side * leafWidth, -leafLen * 0.6,
-                side * 2, -leafLen
+                side * 4, -leafLen
             );
             bezierVertex(
                 side * -leafWidth * 0.3, -leafLen * 0.7,
@@ -228,14 +228,14 @@
 
             // leaf vein
             stroke(61, 107, 74);
-            strokeWeight(0.8);
+            strokeWeight(1.5);
             noFill();
             beginShape();
             vertex(0, 0);
             bezierVertex(
                 side * leafWidth * 0.15, -leafLen * 0.3,
                 side * leafWidth * 0.3, -leafLen * 0.5,
-                side * 2, -leafLen
+                side * 4, -leafLen
             );
             endShape();
 
@@ -249,7 +249,7 @@
             let flowerTilt = stemAngle * 0.3;
             rotate(flowerTilt);
 
-            let baseRadius = 12;
+            let baseRadius = 24;
             let t = frameCount * 0.01 + this.noiseSeed;
 
             // outer petals (larger, darker amber)

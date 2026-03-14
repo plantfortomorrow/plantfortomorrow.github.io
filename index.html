@@ -16,33 +16,26 @@
             align-items: center;
             min-height: 100vh;
             flex-direction: column;
-            overflow: hidden;
         }
         #scene {
             position: relative;
             margin-bottom: 1.5rem;
         }
-        #canvas-wrap {
+        #canvas-wrap, #ascii-wrap {
             position: absolute;
             top: 0;
             left: 0;
         }
-        #ascii-wrap {
-            position: absolute;
-            top: 0;
-            left: 0;
-            display: none;
-            overflow: hidden;
-        }
+        #ascii-wrap { display: none; overflow: hidden; }
         #ascii-pre {
             white-space: pre;
-            background: #0a0a0a;
+            background: transparent;
             margin: 0;
             padding: 0;
             letter-spacing: 0;
         }
         h1 {
-            font-size: 1.2rem;
+            font-size: clamp(0.8rem, 2.5vw, 1.2rem);
             font-weight: 400;
             letter-spacing: 0.3em;
             text-transform: lowercase;
@@ -50,7 +43,7 @@
             margin-bottom: 0.5rem;
         }
         .org {
-            font-size: 0.75rem;
+            font-size: clamp(0.55rem, 1.5vw, 0.75rem);
             color: #555;
             letter-spacing: 0.2em;
         }
@@ -64,15 +57,13 @@
             border: none;
             color: #333;
             font-family: inherit;
-            font-size: 1.2rem;
+            font-size: clamp(0.8rem, 2.5vw, 1.2rem);
             padding: 0;
             margin-left: 0.9em;
             cursor: pointer;
             transition: color 0.3s;
         }
-        #mode-toggle:hover {
-            color: #888;
-        }
+        #mode-toggle:hover { color: #888; }
     </style>
 </head>
 <body>
@@ -87,351 +78,299 @@
     <p class="org">plantfortomorrow.org</p>
 
     <script>
-    // --- Forces ---
-    const WIND_SPEED = 0.4;
+    // ─── Configuration ───────────────────────────────────────────
+    const WIND_SPEED     = 0.4;
     const WIND_TURBULENCE = 0.6;
-    const GRAVITY = 0.02;
-    const DAMPING = 0.92;
-    const STIFFNESS = 0.08;
+    const GRAVITY        = 0.02;
+    const DAMPING        = 0.92;
+    const STIFFNESS      = 0.08;
+    const BASE_W         = 900;   // reference design width
+    const BASE_H         = 860;
+    const ASPECT         = BASE_H / BASE_W;
+    const GROUND_FRAC    = 1 - 80 / BASE_H;  // ground line as fraction of height
+    const ASCII_COLS_REF = 100;
+    const ASCII_ROWS_REF = 50;
 
-    // dimensions computed in setup() based on screen size
-    let W, H, GROUND_Y, COLS, ROWS, CELL_W, CELL_H;
-
-    // --- Solar position: Cairo, NY — oldest fossil forest, ~387 Mya ---
+    // ─── Solar: Cairo, NY — oldest fossil forest, ~387 Mya ───────
     const CAIRO_LAT = 42.2981;
     const CAIRO_LON = -73.9985;
 
-    // sky color stops: [altitude°, [zenithR,G,B], [horizonR,G,B], [groundR,G,B]]
     const SKY_STOPS = [
-        [-18, [4,  4,  8 ], [6,  6,  12], [8,  12, 8 ]],
-        [-6,  [6,  8,  20], [12, 12, 30], [10, 16, 12]],
-        [-2,  [10, 8,  22], [35, 20, 28], [14, 20, 14]],
-        [0,   [14, 10, 18], [55, 32, 22], [18, 25, 16]],
-        [5,   [14, 16, 24], [40, 30, 22], [22, 30, 18]],
-        [15,  [10, 14, 20], [18, 20, 18], [20, 28, 16]],
-        [40,  [8,  12, 16], [14, 16, 14], [18, 26, 15]],
-        [90,  [8,  12, 16], [14, 16, 14], [18, 26, 15]],
+        [-18, [4,4,8],    [6,6,12],    [8,12,8]],
+        [-6,  [6,8,20],   [12,12,30],  [10,16,12]],
+        [-2,  [10,8,22],  [35,20,28],  [14,20,14]],
+        [0,   [14,10,18], [55,32,22],  [18,25,16]],
+        [5,   [14,16,24], [40,30,22],  [22,30,18]],
+        [15,  [10,14,20], [18,20,18],  [20,28,16]],
+        [40,  [8,12,16],  [14,16,14],  [18,26,15]],
+        [90,  [8,12,16],  [14,16,14],  [18,26,15]],
     ];
 
-    let skyZenith = [10, 10, 10];
-    let skyHorizon = [10, 10, 10];
-    let skyGround = [18, 26, 15];
+    let skyZenith  = [10,10,10];
+    let skyHorizon = [10,10,10];
+    let skyGround  = [18,26,15];
     let lastSolarCheck = 0;
 
-    function getSolarAltitude() {
-        let now = new Date();
-        let utcH = now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600;
-
-        // day of year
-        let jan1 = new Date(now.getFullYear(), 0, 1);
-        let dayOfYear = Math.floor((now - jan1) / 86400000) + 1;
-
-        // solar declination
-        let decDeg = -23.45 * Math.cos((2 * Math.PI / 365) * (dayOfYear + 10));
-        let decRad = decDeg * Math.PI / 180;
-
-        // solar time via longitude (bypasses timezone/DST)
-        let solarTime = utcH + CAIRO_LON / 15;
-        if (solarTime < 0) solarTime += 24;
-        if (solarTime >= 24) solarTime -= 24;
-
-        // hour angle and altitude
-        let haRad = (solarTime - 12) * 15 * Math.PI / 180;
-        let latRad = CAIRO_LAT * Math.PI / 180;
-        let sinAlt = Math.sin(latRad) * Math.sin(decRad) +
-                     Math.cos(latRad) * Math.cos(decRad) * Math.cos(haRad);
-        return Math.asin(Math.min(1, Math.max(-1, sinAlt))) * 180 / Math.PI;
-    }
-
-    function lerpColor3(a, b, t) {
-        return [
-            a[0] + (b[0] - a[0]) * t,
-            a[1] + (b[1] - a[1]) * t,
-            a[2] + (b[2] - a[2]) * t,
-        ];
-    }
-
-    function interpolateSky(alt, idx) {
-        // idx: 1=zenith, 2=horizon, 3=ground
-        for (let i = 0; i < SKY_STOPS.length - 1; i++) {
-            if (alt <= SKY_STOPS[i + 1][0]) {
-                let t = (alt - SKY_STOPS[i][0]) / (SKY_STOPS[i + 1][0] - SKY_STOPS[i][0]);
-                t = Math.max(0, Math.min(1, t));
-                return lerpColor3(SKY_STOPS[i][idx], SKY_STOPS[i + 1][idx], t);
-            }
-        }
-        return SKY_STOPS[SKY_STOPS.length - 1][idx];
-    }
-
-    function updateSkyColors() {
-        let alt = getSolarAltitude();
-        skyZenith = interpolateSky(alt, 1);
-        skyHorizon = interpolateSky(alt, 2);
-        skyGround = interpolateSky(alt, 3);
-
-        // sync body background to zenith
-        let z = skyZenith;
-        document.body.style.background = 'rgb(' + Math.round(z[0]) + ',' + Math.round(z[1]) + ',' + Math.round(z[2]) + ')';
-        asciiPre.style.background = 'transparent';
-    }
-
+    // ─── State ───────────────────────────────────────────────────
     let plants = [];
-    let sceneScale = 1;
-    let renderMode = 'canvas'; // 'canvas' or 'ascii'
-    let asciiPre;
-    let canvasWrap, asciiWrap, toggleBtn;
+    let renderMode = 'canvas';
+    let S = 1;            // scene scale: current width / BASE_W
+    let gridCols, gridRows, cellW, cellH;
+    let asciiPre, canvasWrap, asciiWrap, toggleBtn, sceneEl;
 
+    // Plant definitions: normalized positions (0–1) and base segment lengths
+    const PLANT_DEFS = [
+        { xFrac: 0.22, segs: 11, baseLen: 6.4, seed: 0   },
+        { xFrac: 0.52, segs: 14, baseLen: 7.0, seed: 100 },
+        { xFrac: 0.78, segs: 10, baseLen: 6.0, seed: 200 },
+    ];
+
+    // ─── p5: setup ──────────────────────────────────────────────
     function setup() {
-        // responsive sizing: fit to screen, max 900px
-        let maxW = min(windowWidth - 20, 900);
-        let scale = maxW / 900;
-        W = maxW;
-        H = Math.round(860 * scale);
-        GROUND_Y = H - Math.round(80 * scale);
-
-        // ASCII grid scales with resolution
-        COLS = Math.round(100 * scale);
-        ROWS = Math.round(50 * scale);
-        CELL_W = W / COLS;
-        CELL_H = H / ROWS;
-
-        let scene = document.getElementById('scene');
-        scene.style.width = W + 'px';
-        scene.style.height = H + 'px';
-
-        let canvas = createCanvas(W, H);
-        canvas.parent('canvas-wrap');
-
-        asciiPre = document.getElementById('ascii-pre');
+        sceneEl   = document.getElementById('scene');
+        asciiPre  = document.getElementById('ascii-pre');
         canvasWrap = document.getElementById('canvas-wrap');
-        asciiWrap = document.getElementById('ascii-wrap');
-        asciiWrap.style.width = W + 'px';
-        asciiWrap.style.height = H + 'px';
-        toggleBtn = document.getElementById('mode-toggle');
-
+        asciiWrap  = document.getElementById('ascii-wrap');
+        toggleBtn  = document.getElementById('mode-toggle');
         toggleBtn.addEventListener('click', toggleMode);
 
-        sizeAsciiFont();
+        let dims = sceneDims();
+        let cnv  = createCanvas(dims.w, dims.h);
+        cnv.parent('canvas-wrap');
 
-        sceneScale = scale;
-        plants.push(new Plant(W * 0.22, GROUND_Y, 11, 6.4 * sceneScale, 0.0));
-        plants.push(new Plant(W * 0.52, GROUND_Y, 14, 7.0 * sceneScale, 100));
-        plants.push(new Plant(W * 0.78, GROUND_Y, 10, 6.0 * sceneScale, 200));
+        for (let def of PLANT_DEFS) {
+            plants.push(new Plant(def.xFrac, def.segs, def.baseLen, def.seed));
+        }
+
+        applyLayout();
     }
 
+    // ─── p5: windowResized ──────────────────────────────────────
+    function windowResized() {
+        let dims = sceneDims();
+        resizeCanvas(dims.w, dims.h);
+        applyLayout();
+    }
+
+    // ─── Layout computation ─────────────────────────────────────
+    function sceneDims() {
+        let w = min(windowWidth - 16, BASE_W);
+        let h = round(w * ASPECT);
+        // cap height to viewport too
+        if (h > windowHeight * 0.78) {
+            h = round(windowHeight * 0.78);
+            w = round(h / ASPECT);
+        }
+        return { w, h };
+    }
+
+    function applyLayout() {
+        S = width / BASE_W;
+
+        sceneEl.style.width  = width + 'px';
+        sceneEl.style.height = height + 'px';
+        asciiWrap.style.width  = width + 'px';
+        asciiWrap.style.height = height + 'px';
+
+        // ASCII grid: scale columns/rows proportionally
+        gridCols = max(40, round(ASCII_COLS_REF * S));
+        gridRows = max(20, round(ASCII_ROWS_REF * S));
+        cellW = width  / gridCols;
+        cellH = height / gridRows;
+
+        sizeAsciiFont();
+    }
+
+    function groundY() { return height * GROUND_FRAC; }
+
+    // ─── Scaling helpers (p5 idiom: everything relative to S) ───
+    function su(v) { return v * S; }   // scale unit
+
+    // ─── ASCII font sizing ──────────────────────────────────────
+    function sizeAsciiFont() {
+        let m = document.createElement('span');
+        m.style.cssText = "font-family:'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;font-size:20px;line-height:1;position:absolute;white-space:pre;visibility:hidden";
+        m.textContent = 'X'.repeat(gridCols);
+        document.body.appendChild(m);
+        let cw20 = m.offsetWidth / gridCols;
+        document.body.removeChild(m);
+        asciiPre.style.fontSize   = (20 * (width / (cw20 * gridCols))) + 'px';
+        asciiPre.style.lineHeight = (height / gridRows) + 'px';
+    }
+
+    // ─── Mode toggle ────────────────────────────────────────────
     function keyPressed() {
         if (key === 'a' || key === 'A') toggleMode();
     }
 
     function toggleMode() {
         renderMode = renderMode === 'canvas' ? 'ascii' : 'canvas';
-        if (renderMode === 'canvas') {
-            canvasWrap.style.display = 'block';
-            asciiWrap.style.display = 'none';
-            toggleBtn.textContent = '_';
-        } else {
-            canvasWrap.style.display = 'none';
-            asciiWrap.style.display = 'block';
-            toggleBtn.textContent = '\u273F';
+        canvasWrap.style.display = renderMode === 'canvas' ? 'block' : 'none';
+        asciiWrap.style.display  = renderMode === 'ascii'  ? 'block' : 'none';
+        toggleBtn.textContent    = renderMode === 'canvas' ? '_' : '\u273F';
+    }
+
+    // ─── Solar position ─────────────────────────────────────────
+    function getSolarAltitude() {
+        let now = new Date();
+        let utcH = now.getUTCHours() + now.getUTCMinutes()/60 + now.getUTCSeconds()/3600;
+        let jan1 = new Date(now.getFullYear(), 0, 1);
+        let doy  = floor((now - jan1) / 86400000) + 1;
+        let decR = (-23.45 * cos(TWO_PI/365 * (doy + 10))) * PI/180;
+        let solar = utcH + CAIRO_LON/15;
+        if (solar < 0)  solar += 24;
+        if (solar >= 24) solar -= 24;
+        let haR  = (solar - 12) * 15 * PI/180;
+        let latR = CAIRO_LAT * PI/180;
+        let sinA = sin(latR)*sin(decR) + cos(latR)*cos(decR)*cos(haR);
+        return asin(constrain(sinA, -1, 1)) * 180/PI;
+    }
+
+    function lerpC(a, b, t) {
+        return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+    }
+
+    function interpSky(alt, idx) {
+        for (let i = 0; i < SKY_STOPS.length-1; i++) {
+            if (alt <= SKY_STOPS[i+1][0]) {
+                let t = constrain((alt - SKY_STOPS[i][0]) / (SKY_STOPS[i+1][0] - SKY_STOPS[i][0]), 0, 1);
+                return lerpC(SKY_STOPS[i][idx], SKY_STOPS[i+1][idx], t);
+            }
         }
+        return SKY_STOPS[SKY_STOPS.length-1][idx];
     }
 
-    function sizeAsciiFont() {
-        // measure actual character cell size at a reference font-size
-        let measure = document.createElement('span');
-        measure.style.fontFamily = "'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace";
-        measure.style.fontSize = '20px';
-        measure.style.lineHeight = '1';
-        measure.style.position = 'absolute';
-        measure.style.whiteSpace = 'pre';
-        measure.style.visibility = 'hidden';
-        measure.textContent = 'X'.repeat(COLS);
-        document.body.appendChild(measure);
-        let charWidth20 = measure.offsetWidth / COLS; // width of one char at 20px
-        document.body.removeChild(measure);
-
-        // target: COLS chars = 900px wide
-        let targetFontSize = 20 * (W / (charWidth20 * COLS));
-        // target: ROWS lines = 860px tall
-        let targetLineHeight = H / ROWS;
-
-        asciiPre.style.fontSize = targetFontSize + 'px';
-        asciiPre.style.lineHeight = targetLineHeight + 'px';
+    function updateSky() {
+        let alt    = getSolarAltitude();
+        skyZenith  = interpSky(alt, 1);
+        skyHorizon = interpSky(alt, 2);
+        skyGround  = interpSky(alt, 3);
+        let z = skyZenith;
+        document.body.style.background = `rgb(${round(z[0])},${round(z[1])},${round(z[2])})`;
     }
 
+    // ─── p5: draw ───────────────────────────────────────────────
     function draw() {
-        // update sky every 5 seconds
         if (frameCount - lastSolarCheck > 300 || lastSolarCheck === 0) {
-            updateSkyColors();
+            updateSky();
             lastSolarCheck = frameCount;
         }
 
-        // wind force from Perlin noise
         let t = frameCount * 0.008;
-        let windBase = (noise(t) - 0.45) * WIND_SPEED;
-        let gust = (noise(t * 3.0 + 50) - 0.5) * WIND_SPEED * WIND_TURBULENCE;
-        let windForce = windBase + gust;
+        let wf = (noise(t) - 0.45) * WIND_SPEED
+               + (noise(t*3+50) - 0.5) * WIND_SPEED * WIND_TURBULENCE;
 
         for (let p of plants) {
-            p.applyWind(windForce, t);
+            p.applyWind(wf, t);
             p.update();
             p.computePoints();
         }
 
-        if (renderMode === 'canvas') {
-            drawCanvas();
-        } else {
-            drawAscii();
-        }
+        if (renderMode === 'canvas') drawScene();
+        else drawAsciiScene();
     }
 
-    function drawCanvas() {
-        // sky gradient: zenith at top → horizon at ground line
-        noStroke();
-        for (let y = 0; y < GROUND_Y; y++) {
-            let t = y / GROUND_Y;
-            let c = lerpColor3(skyZenith, skyHorizon, t);
+    // ─── Canvas renderer ────────────────────────────────────────
+    function drawScene() {
+        let gy = groundY();
+
+        // sky gradient
+        for (let y = 0; y < gy; y++) {
+            let c = lerpC(skyZenith, skyHorizon, y/gy);
             stroke(c[0], c[1], c[2]);
-            line(0, y, W, y);
+            line(0, y, width, y);
         }
+
         // ground fill
         noStroke();
         fill(skyGround[0], skyGround[1], skyGround[2]);
-        rect(0, GROUND_Y, W, H - GROUND_Y);
+        rect(0, gy, width, height - gy);
 
         // ground texture
         for (let i = 0; i < 70; i++) {
-            let gx = noise(i * 0.3, 999) * W;
-            let gy = GROUND_Y + noise(i * 0.5, 888) * 50;
-            fill(skyGround[0] + noise(i * 0.7) * 16,
-                 skyGround[1] + noise(i * 0.9) * 20,
-                 skyGround[2] + noise(i * 0.4) * 12, 120);
-            text('~', gx, gy);
+            let gx = noise(i*0.3, 999) * width;
+            let gy2 = gy + noise(i*0.5, 888) * su(50);
+            fill(skyGround[0]+noise(i*0.7)*16, skyGround[1]+noise(i*0.9)*20, skyGround[2]+noise(i*0.4)*12, 120);
+            text('~', gx, gy2);
         }
 
-        for (let p of plants) {
-            p.drawCanvas();
-        }
+        for (let p of plants) p.drawCanvas();
     }
 
-    // --- ASCII Renderer ---
+    // ─── ASCII renderer ─────────────────────────────────────────
+    const WIND_CHARS = [' ',' ','.',',','-','~','='];
+
+    function rgbS(r,g,b) { return `rgb(${round(r)},${round(g)},${round(b)})`; }
 
     function makeGrid() {
-        let grid = [];
-        for (let r = 0; r < ROWS; r++) {
-            grid[r] = [];
-            for (let c = 0; c < COLS; c++) {
-                grid[r][c] = { ch: ' ', fg: null };
-            }
+        let g = [];
+        for (let r = 0; r < gridRows; r++) {
+            g[r] = [];
+            for (let c = 0; c < gridCols; c++) g[r][c] = {ch:' ', fg:null};
         }
-        return grid;
+        return g;
     }
 
-    function gridSet(grid, px, py, ch, fg) {
-        let c = Math.floor(px / CELL_W);
-        let r = Math.floor(py / CELL_H);
-        if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
-            grid[r][c] = { ch, fg };
-        }
+    function gSet(grid, px, py, ch, fg) {
+        let c = floor(px/cellW), r = floor(py/cellH);
+        if (r >= 0 && r < gridRows && c >= 0 && c < gridCols) grid[r][c] = {ch, fg};
     }
 
-    function gridLine(grid, x0, y0, x1, y1, fg) {
-        let dx = x1 - x0;
-        let dy = y1 - y0;
-        let steps = Math.max(Math.abs(dx / CELL_W), Math.abs(dy / CELL_H), 1);
-        steps = Math.ceil(steps);
+    function gLine(grid, x0, y0, x1, y1, fg) {
+        let dx = x1-x0, dy = y1-y0;
+        let steps = max(ceil(max(abs(dx/cellW), abs(dy/cellH))), 1);
         for (let i = 0; i <= steps; i++) {
-            let t = steps === 0 ? 0 : i / steps;
-            let x = x0 + dx * t;
-            let y = y0 + dy * t;
-            let slope = steps > 0 ? dx / Math.max(Math.abs(dy), 1) : 0;
-            let ch;
-            if (Math.abs(slope) < 0.3) ch = '|';
-            else if (slope > 0) ch = dy < 0 ? '/' : '\\';
-            else ch = dy < 0 ? '\\' : '/';
-            gridSet(grid, x, y, ch, fg);
+            let t = i/steps, x = x0+dx*t, y = y0+dy*t;
+            let sl = dx / max(abs(dy), 1);
+            let ch = abs(sl) < 0.3 ? '|' : (sl > 0 ? (dy < 0 ? '/' : '\\') : (dy < 0 ? '\\' : '/'));
+            gSet(grid, x, y, ch, fg);
         }
     }
 
-    const WIND_CHARS = [' ', ' ', '.', ',', '-', '~', '='];
-
-    function rgbStr(r, g, b) {
-        return 'rgb(' + Math.round(r) + ',' + Math.round(g) + ',' + Math.round(b) + ')';
-    }
-
-    function drawAscii() {
+    function drawAsciiScene() {
         let grid = makeGrid();
         let t = frameCount * 0.006;
-        let groundRow = Math.floor(GROUND_Y / CELL_H);
+        let gRow = floor(groundY() / cellH);
 
-        // Perlin noise wind field — colors tinted by sky gradient
-        for (let r = 0; r < groundRow; r++) {
-            let rowT = r / groundRow;
-            let rowColor = lerpColor3(skyZenith, skyHorizon, rowT);
-
-            for (let c = 0; c < COLS; c++) {
-                let nx = c * 0.06 + t * 3;
-                let ny = r * 0.08 + t * 0.5;
-                let n1 = noise(nx, ny);
-                let n2 = noise(nx * 2.5 + 100, ny * 2.5 + 100) * 0.4;
-                let n = n1 + n2;
-
-                let idx = Math.floor(n * (WIND_CHARS.length - 1));
-                idx = Math.min(idx, WIND_CHARS.length - 1);
-
+        // wind field background — sky-tinted
+        for (let r = 0; r < gRow; r++) {
+            let rowC = lerpC(skyZenith, skyHorizon, r/gRow);
+            for (let c = 0; c < gridCols; c++) {
+                let nx = c*0.06 + t*3, ny = r*0.08 + t*0.5;
+                let n = noise(nx,ny) + noise(nx*2.5+100, ny*2.5+100)*0.4;
+                let idx = min(floor(n * (WIND_CHARS.length-1)), WIND_CHARS.length-1);
                 if (idx > 0) {
-                    // brighten row color by noise intensity
-                    let boost = 1.0 + idx * 0.15;
-                    let fg = rgbStr(
-                        Math.min(255, rowColor[0] * boost + idx * 2),
-                        Math.min(255, rowColor[1] * boost + idx * 2),
-                        Math.min(255, rowColor[2] * boost + idx * 2)
-                    );
-                    grid[r][c] = { ch: WIND_CHARS[idx], fg: fg };
+                    let b = 1 + idx*0.15;
+                    grid[r][c] = {ch: WIND_CHARS[idx], fg: rgbS(
+                        min(255, rowC[0]*b + idx*2),
+                        min(255, rowC[1]*b + idx*2),
+                        min(255, rowC[2]*b + idx*2))};
                 }
             }
         }
 
-        // ground — tinted by sky ground color
-        for (let r = groundRow; r < ROWS; r++) {
-            for (let c = 0; c < COLS; c++) {
-                if (noise(c * 0.4 + r * 0.3, 777) > 0.35) {
-                    let bright = noise(c * 0.2, r * 0.5) > 0.5 ? 1.3 : 0.8;
-                    let fg = rgbStr(skyGround[0] * bright, skyGround[1] * bright, skyGround[2] * bright);
-                    grid[r][c] = { ch: '~', fg: fg };
+        // ground
+        for (let r = gRow; r < gridRows; r++)
+            for (let c = 0; c < gridCols; c++)
+                if (noise(c*0.4+r*0.3, 777) > 0.35) {
+                    let b = noise(c*0.2,r*0.5) > 0.5 ? 1.3 : 0.8;
+                    grid[r][c] = {ch:'~', fg: rgbS(skyGround[0]*b, skyGround[1]*b, skyGround[2]*b)};
                 }
-            }
-        }
 
-        // draw each plant
-        for (let p of plants) {
-            p.drawAsciiGrid(grid);
-        }
+        for (let p of plants) p.drawAsciiGrid(grid);
 
-        // render grid to HTML
+        // render — run-length encode by color
         let lines = [];
-        for (let r = 0; r < ROWS; r++) {
-            let line = '';
-            let i = 0;
-            while (i < COLS) {
-                let cell = grid[r][i];
-                if (!cell.fg) {
-                    // collect consecutive uncolored cells
-                    let run = '';
-                    while (i < COLS && !grid[r][i].fg) {
-                        run += grid[r][i].ch;
-                        i++;
-                    }
+        for (let r = 0; r < gridRows; r++) {
+            let line = '', i = 0;
+            while (i < gridCols) {
+                let fg = grid[r][i].fg, run = '';
+                if (!fg) {
+                    while (i < gridCols && !grid[r][i].fg) run += grid[r][i++].ch;
                     line += run;
                 } else {
-                    // collect consecutive same-color cells
-                    let fg = cell.fg;
-                    let run = '';
-                    while (i < COLS && grid[r][i].fg === fg) {
-                        run += grid[r][i].ch;
-                        i++;
-                    }
-                    line += '<span style="color:' + fg + '">' + run + '</span>';
+                    while (i < gridCols && grid[r][i].fg === fg) run += grid[r][i++].ch;
+                    line += `<span style="color:${fg}">${run}</span>`;
                 }
             }
             lines.push(line);
@@ -439,263 +378,215 @@
         asciiPre.innerHTML = lines.join('\n');
     }
 
-    // --- Plant Class ---
-
+    // ─── Plant ──────────────────────────────────────────────────
     class Plant {
-        constructor(x, groundY, segCount, segLen, noiseSeed) {
-            this.baseX = x;
-            this.baseY = groundY;
-            this.segCount = segCount;
-            this.segLen = segLen;
-            this.noiseSeed = noiseSeed;
-            this.segments = [];
-            this.leaves = [];
-            this.points = [];
+        constructor(xFrac, segCount, baseSegLen, noiseSeed) {
+            this.xFrac      = xFrac;       // normalized x (0–1)
+            this.segCount    = segCount;
+            this.baseSegLen  = baseSegLen;   // segment length at scale=1
+            this.noiseSeed   = noiseSeed;
+            this.segments    = [];
+            this.points      = [];
 
             for (let i = 0; i < segCount; i++) {
                 this.segments.push({
-                    angle: 0,
-                    velocity: 0,
-                    restAngle: 0,
-                    windFactor: map(i, 0, segCount - 1, 0.1, 1.0),
-                    stiffness: map(i, 0, segCount - 1, STIFFNESS * 1.5, STIFFNESS * 0.6),
+                    angle: 0, velocity: 0, restAngle: 0,
+                    windFactor: map(i, 0, segCount-1, 0.1, 1.0),
+                    stiffness:  map(i, 0, segCount-1, STIFFNESS*1.5, STIFFNESS*0.6),
                 });
             }
 
-            let leafPositions = [
-                { seg: floor(segCount * 0.3), side: 1, size: 0.8 },
-                { seg: floor(segCount * 0.45), side: -1, size: 1.0 },
-                { seg: floor(segCount * 0.6), side: 1, size: 0.9 },
-                { seg: floor(segCount * 0.75), side: -1, size: 0.7 },
+            // leaf positions as fractions of stem height
+            this.leafDefs = [
+                {frac: 0.3,  side:  1, size: 0.8},
+                {frac: 0.45, side: -1, size: 1.0},
+                {frac: 0.6,  side:  1, size: 0.9},
+                {frac: 0.75, side: -1, size: 0.7},
             ];
-            for (let lp of leafPositions) {
-                if (lp.seg < segCount) this.leaves.push(lp);
-            }
 
             this.petalCount = floor(random(10, 16));
-            this.petalSizes = [];
-            for (let i = 0; i < this.petalCount; i++) {
-                this.petalSizes.push(random(0.8, 1.2));
-            }
+            this.petalSizes = Array.from({length: this.petalCount}, () => random(0.8, 1.2));
         }
 
-        applyWind(windForce, t) {
+        // current pixel base position — always from live width/height
+        get baseX() { return this.xFrac * width; }
+        get baseY() { return groundY(); }
+        get segLen() { return this.baseSegLen * S; }
+
+        applyWind(wf, t) {
             for (let i = 0; i < this.segments.length; i++) {
                 let seg = this.segments[i];
-                let localWind = windForce * seg.windFactor;
-                let turbulence = (noise(t * 2 + i * 0.3 + this.noiseSeed) - 0.5) * 0.02 * WIND_TURBULENCE;
-                seg.velocity += localWind * 0.015 + turbulence;
+                let turb = (noise(t*2 + i*0.3 + this.noiseSeed) - 0.5) * 0.02 * WIND_TURBULENCE;
+                seg.velocity += wf * seg.windFactor * 0.015 + turb;
             }
         }
 
         update() {
             for (let seg of this.segments) {
-                let springForce = -(seg.angle - seg.restAngle) * seg.stiffness;
-                let gravityForce = -sin(seg.angle) * GRAVITY;
-                seg.velocity += springForce + gravityForce;
+                seg.velocity += -(seg.angle - seg.restAngle) * seg.stiffness - sin(seg.angle) * GRAVITY;
                 seg.velocity *= DAMPING;
-                seg.angle += seg.velocity;
-                seg.angle = constrain(seg.angle, -0.4, 0.4);
+                seg.angle = constrain(seg.angle + seg.velocity, -0.4, 0.4);
             }
         }
 
         computePoints() {
-            this.points = [{ x: this.baseX, y: this.baseY, cumAngle: 0 }];
-            let cumulativeAngle = 0;
-            for (let i = 0; i < this.segments.length; i++) {
-                cumulativeAngle += this.segments[i].angle;
+            this.points = [{x: this.baseX, y: this.baseY, cumAngle: 0}];
+            let ca = 0;
+            for (let seg of this.segments) {
+                ca += seg.angle;
                 let prev = this.points[this.points.length - 1];
                 this.points.push({
-                    x: prev.x + sin(cumulativeAngle) * this.segLen,
-                    y: prev.y - cos(cumulativeAngle) * this.segLen,
-                    cumAngle: cumulativeAngle,
+                    x: prev.x + sin(ca) * this.segLen,
+                    y: prev.y - cos(ca) * this.segLen,
+                    cumAngle: ca
                 });
             }
         }
 
-        // --- Canvas drawing ---
+        leafSegIdx(frac) { return floor(this.segCount * frac); }
 
+        // ── Canvas ──────────────────────────────────────────────
         drawCanvas() {
             let pts = this.points;
 
+            // stem — two-pass for outline/fill
             noFill();
-            for (let w = 0; w < 2; w++) {
-                let sw = w === 0 ? 7 * sceneScale : 3 * sceneScale;
-                let sc = w === 0 ? color(55, 95, 65) : color(74, 124, 89);
-                stroke(sc);
-                strokeWeight(sw);
+            for (let pass = 0; pass < 2; pass++) {
+                stroke(pass === 0 ? color(55,95,65) : color(74,124,89));
+                strokeWeight(pass === 0 ? su(7) : su(3));
                 beginShape();
                 curveVertex(pts[0].x, pts[0].y);
                 for (let p of pts) curveVertex(p.x, p.y);
-                curveVertex(pts[pts.length - 1].x, pts[pts.length - 1].y);
+                curveVertex(pts[pts.length-1].x, pts[pts.length-1].y);
                 endShape();
             }
 
-            for (let lf of this.leaves) {
-                let pt = pts[lf.seg + 1];
-                this.drawLeafCanvas(pt.x, pt.y, lf.side, lf.size, pt.cumAngle);
+            // leaves
+            for (let ld of this.leafDefs) {
+                let idx = this.leafSegIdx(ld.frac);
+                if (idx+1 < pts.length) {
+                    let pt = pts[idx+1];
+                    this._leafCanvas(pt.x, pt.y, ld.side, ld.size, pt.cumAngle);
+                }
             }
 
-            let tip = pts[pts.length - 1];
-            this.drawFlowerCanvas(tip.x, tip.y, tip.cumAngle);
+            // flower
+            let tip = pts[pts.length-1];
+            this._flowerCanvas(tip.x, tip.y, tip.cumAngle);
         }
 
-        drawLeafCanvas(x, y, side, sz, stemAngle) {
+        _leafCanvas(x, y, side, sz, stemAng) {
             push();
             translate(x, y);
-            rotate(stemAngle + side * 0.8);
-            let leafLen = 36 * sz * sceneScale;
-            let leafWidth = 14 * sz * sceneScale;
+            rotate(stemAng + side * 0.8);
+            let ll = su(36) * sz, lw = su(14) * sz, tip = su(4);
 
             noStroke();
-            fill(90, 158, 111, 200);
+            fill(90,158,111, 200);
             beginShape();
             vertex(0, 0);
-            let tipOff = 4 * sceneScale;
-            bezierVertex(side * leafWidth * 0.5, -leafLen * 0.3, side * leafWidth, -leafLen * 0.6, side * tipOff, -leafLen);
-            bezierVertex(side * -leafWidth * 0.3, -leafLen * 0.7, side * -leafWidth * 0.2, -leafLen * 0.3, 0, 0);
+            bezierVertex(side*lw*0.5, -ll*0.3, side*lw, -ll*0.6, side*tip, -ll);
+            bezierVertex(side*-lw*0.3, -ll*0.7, side*-lw*0.2, -ll*0.3, 0, 0);
             endShape(CLOSE);
 
-            stroke(61, 107, 74);
-            strokeWeight(1.5 * sceneScale);
+            stroke(61,107,74);
+            strokeWeight(su(1.5));
             noFill();
             beginShape();
             vertex(0, 0);
-            bezierVertex(side * leafWidth * 0.15, -leafLen * 0.3, side * leafWidth * 0.3, -leafLen * 0.5, side * tipOff, -leafLen);
+            bezierVertex(side*lw*0.15, -ll*0.3, side*lw*0.3, -ll*0.5, side*tip, -ll);
             endShape();
             pop();
         }
 
-        drawFlowerCanvas(x, y, stemAngle) {
+        _flowerCanvas(x, y, stemAng) {
             push();
             translate(x, y);
-            rotate(stemAngle * 0.3);
-            let baseRadius = 24 * sceneScale;
+            rotate(stemAng * 0.3);
+            let br = su(24);
             let t = frameCount * 0.01 + this.noiseSeed;
 
+            // outer petals
             for (let i = 0; i < this.petalCount; i++) {
-                let a = (TWO_PI / this.petalCount) * i;
-                let wobble = sin(t * 0.7 + i * 0.5) * 0.08;
-                let pa = a + wobble;
-                let pr = baseRadius * this.petalSizes[i];
-                noStroke();
-                fill(212, 145, 26, 220);
-                ellipse(cos(pa) * pr * 0.7, sin(pa) * pr * 0.7, pr * 1.1, pr * 0.7);
+                let a = TWO_PI/this.petalCount * i + sin(t*0.7+i*0.5)*0.08;
+                let pr = br * this.petalSizes[i];
+                noStroke(); fill(212,145,26, 220);
+                ellipse(cos(a)*pr*0.7, sin(a)*pr*0.7, pr*1.1, pr*0.7);
             }
-            for (let i = 0; i < this.petalCount - 2; i++) {
-                let a = (TWO_PI / (this.petalCount - 2)) * i + 0.3;
-                let wobble = sin(t * 0.9 + i * 0.7) * 0.06;
-                let pa = a + wobble;
-                let pr = baseRadius * 0.7;
-                noStroke();
-                fill(232, 163, 23, 230);
-                ellipse(cos(pa) * pr * 0.5, sin(pa) * pr * 0.5, pr * 0.9, pr * 0.55);
+            // inner petals
+            for (let i = 0; i < this.petalCount-2; i++) {
+                let a = TWO_PI/(this.petalCount-2) * i + 0.3 + sin(t*0.9+i*0.7)*0.06;
+                let pr = br * 0.7;
+                noStroke(); fill(232,163,23, 230);
+                ellipse(cos(a)*pr*0.5, sin(a)*pr*0.5, pr*0.9, pr*0.55);
             }
+            // center
             noStroke();
-            fill(196, 127, 23);
-            ellipse(0, 0, baseRadius * 0.6, baseRadius * 0.6);
-            fill(170, 105, 15);
-            ellipse(0, 0, baseRadius * 0.35, baseRadius * 0.35);
+            fill(196,127,23); ellipse(0,0, br*0.6, br*0.6);
+            fill(170,105,15); ellipse(0,0, br*0.35, br*0.35);
             pop();
         }
 
-        // --- ASCII drawing ---
-
+        // ── ASCII ───────────────────────────────────────────────
         drawAsciiGrid(grid) {
             let pts = this.points;
-            let stemColor = '#4a7c59';
+            for (let i = 0; i < pts.length-1; i++)
+                gLine(grid, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y, '#4a7c59');
 
-            // stem
-            for (let i = 0; i < pts.length - 1; i++) {
-                gridLine(grid, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, stemColor);
+            for (let ld of this.leafDefs) {
+                let idx = this.leafSegIdx(ld.frac);
+                if (idx+1 < pts.length) {
+                    let pt = pts[idx+1];
+                    this._leafAscii(grid, pt.x, pt.y, ld.side, ld.size, pt.cumAngle);
+                }
             }
 
-            // leaves
-            for (let lf of this.leaves) {
-                let pt = pts[lf.seg + 1];
-                this.drawLeafAscii(grid, pt.x, pt.y, lf.side, lf.size, pt.cumAngle);
-            }
-
-            // flower
-            let tip = pts[pts.length - 1];
-            this.drawFlowerAscii(grid, tip.x, tip.y);
+            let tip = pts[pts.length-1];
+            this._flowerAscii(grid, tip.x, tip.y);
         }
 
-        drawLeafAscii(grid, x, y, side, sz, stemAngle) {
-            let leafLen = 36 * sz * sceneScale;
-            let leafWidth = 14 * sz * sceneScale;
-            let ang = stemAngle + side * 0.8;
-            let leafColor = '#5a9e6f';
-            let veinColor = '#3d6b4a';
+        _leafAscii(grid, x, y, side, sz, stemAng) {
+            let ll = su(36)*sz, lw = su(14)*sz;
+            let ang = stemAng + side*0.8;
+            let tx = x + sin(ang)*ll*0.7*side, ty = y - cos(ang)*ll*0.7;
+            let steps = max(1, ceil(ll / cellH));
 
-            // draw leaf as a short angled line with characters
-            let tipX = x + Math.sin(ang) * leafLen * 0.7 * side;
-            let tipY = y - Math.cos(ang) * leafLen * 0.7;
-            let midX = x + Math.sin(ang) * leafLen * 0.35 * side;
-            let midY = y - Math.cos(ang) * leafLen * 0.35;
-
-            // leaf body - a few characters along the leaf
-            let steps = Math.ceil(leafLen / CELL_H);
             for (let i = 0; i <= steps; i++) {
-                let t = i / steps;
-                let lx = x + (tipX - x) * t;
-                let ly = y + (tipY - y) * t;
-                // leaf width varies along length (widest at middle)
-                let w = Math.sin(t * Math.PI) * leafWidth * 0.4;
-
-                let c = Math.floor(lx / CELL_W);
-                let r = Math.floor(ly / CELL_H);
-                if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
-                    // choose character based on position
-                    if (t < 0.15) {
-                        grid[r][c] = { ch: side > 0 ? '(' : ')', fg: leafColor };
-                    } else if (t > 0.85) {
-                        grid[r][c] = { ch: side > 0 ? '>' : '<', fg: leafColor };
-                    } else {
-                        grid[r][c] = { ch: side > 0 ? ')' : '(', fg: leafColor };
-                        // width chars on either side
-                        let wc = Math.floor(w / CELL_W);
+                let t = i/steps;
+                let lx = x + (tx-x)*t, ly = y + (ty-y)*t;
+                let w = sin(t*PI) * lw * 0.4;
+                let c = floor(lx/cellW), r = floor(ly/cellH);
+                if (r >= 0 && r < gridRows && c >= 0 && c < gridCols) {
+                    if (t < 0.15)      grid[r][c] = {ch: side>0?'(':')', fg:'#5a9e6f'};
+                    else if (t > 0.85) grid[r][c] = {ch: side>0?'>':'<', fg:'#5a9e6f'};
+                    else {
+                        grid[r][c] = {ch: side>0?')':'(', fg:'#5a9e6f'};
+                        let wc = floor(w/cellW);
                         for (let j = 1; j <= wc; j++) {
-                            let cc = c + j * side;
-                            if (cc >= 0 && cc < COLS) {
-                                grid[r][cc] = { ch: t < 0.5 ? '{' : '}', fg: veinColor };
-                            }
+                            let cc = c + j*side;
+                            if (cc >= 0 && cc < gridCols)
+                                grid[r][cc] = {ch: t<0.5?'{':'}', fg:'#3d6b4a'};
                         }
                     }
                 }
             }
         }
 
-        drawFlowerAscii(grid, x, y) {
-            let amber = '#e8a317';
-            let darkAmber = '#d4911a';
-            let center = '#c47f17';
-            let r = 24 * sceneScale; // radius in pixels
-
-            // flower pattern - rings of characters
-            // outer ring
-            let outerChars = ['*', 'o', '*', 'o', '*', 'o', '*', 'o'];
-            for (let i = 0; i < outerChars.length; i++) {
-                let a = (Math.PI * 2 / outerChars.length) * i + frameCount * 0.003 + this.noiseSeed;
-                let px = x + Math.cos(a) * r;
-                let py = y + Math.sin(a) * r * 0.6;
-                gridSet(grid, px, py, outerChars[i], darkAmber);
+        _flowerAscii(grid, x, y) {
+            let r = su(24);
+            let outer = ['*','o','*','o','*','o','*','o'];
+            for (let i = 0; i < outer.length; i++) {
+                let a = TWO_PI/outer.length * i + frameCount*0.003 + this.noiseSeed;
+                gSet(grid, x+cos(a)*r, y+sin(a)*r*0.6, outer[i], '#d4911a');
             }
-
-            // middle ring
-            let midChars = ['.', 'o', '.', 'o', '.', 'o'];
-            for (let i = 0; i < midChars.length; i++) {
-                let a = (Math.PI * 2 / midChars.length) * i + 0.3 + frameCount * 0.002 + this.noiseSeed;
-                let px = x + Math.cos(a) * r * 0.55;
-                let py = y + Math.sin(a) * r * 0.35;
-                gridSet(grid, px, py, midChars[i], amber);
+            let mid = ['.','o','.','o','.','o'];
+            for (let i = 0; i < mid.length; i++) {
+                let a = TWO_PI/mid.length * i + 0.3 + frameCount*0.002 + this.noiseSeed;
+                gSet(grid, x+cos(a)*r*0.55, y+sin(a)*r*0.35, mid[i], '#e8a317');
             }
-
-            // center
-            gridSet(grid, x, y, '@', center);
-            // fill gaps around center
-            gridSet(grid, x - CELL_W, y, '*', amber);
-            gridSet(grid, x + CELL_W, y, '*', amber);
+            gSet(grid, x, y, '@', '#c47f17');
+            gSet(grid, x-cellW, y, '*', '#e8a317');
+            gSet(grid, x+cellW, y, '*', '#e8a317');
         }
     }
     </script>
